@@ -1,0 +1,16 @@
+# 构建产物
+bin/
+obj/
+cipx/
+
+# IDE
+.vs/
+*.user
+
+# 运行时隐私数据（防御性，实际位于插件目录）
+logs/
+enrollment/
+*.log
+
+# 本地记忆 / 工具数据（非核心代码）
+.workbuddy/

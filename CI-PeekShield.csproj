@@ -1,0 +1,123 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0-windows</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>CI-PeekShield</AssemblyName>
+        <RootNamespace>CIPeekShield</RootNamespace>
+        <EnableDynamicLoading>true</EnableDynamicLoading>
+        <CreateCipx>true</CreateCipx>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <NoWarn>NETSDK1206</NoWarn>
+        <!-- 本插件需要调用 Windows 本机 API（摄像头 / 窗口 / 热键 / 托盘），故用 -windows TFM -->
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- ClassIsland 插件 SDK：版本须与主程序匹配（2.0.x 用 2.0.3.2） -->
+        <PackageReference Include="ClassIsland.PluginSdk" Version="2.0.3.2">
+            <ExcludeAssets>runtime; native</ExcludeAssets>
+        </PackageReference>
+        <!-- 本地人脸检测 / 图像处理（OpenCV 托管封装，原生 dll 由 runtime 包提供） -->
+        <PackageReference Include="OpenCvSharp4" Version="4.10.0.20240615" />
+        <PackageReference Include="OpenCvSharp4.runtime.win" Version="4.10.0.20240615" />
+        <!-- DirectShow 设备枚举：提供与 OpenCV(DSHOW 后端) 索引顺序一致的真实摄像头名称 -->
+        <PackageReference Include="DirectShowLib" Version="1.0.0">
+            <NoWarn>NU1701</NoWarn>
+        </PackageReference>
+        <!-- 本地人脸识别：dlib ResNet-34 128 维嵌入（离线、无需训练，替代手写 LBP） -->
+        <PackageReference Include="DlibDotNet" Version="19.21.0.20220724" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- 托盘图标 NotifyIcon / SystemEvents / System.Drawing 需要 WindowsDesktop 框架 -->
+        <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- 复制 OpenCV 原生库到输出根目录，确保插件在 ClassIsland 的程序集加载上下文中可被解析 -->
+        <None Update="manifest.yml"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+        <None Update="README.md"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+        <None Update="LICENSE"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+        <None Update="icon.png"><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory></None>
+        <!-- dlib 本地模型：随构建输出一并部署到插件目录（文件较大，已被 .gitignore 排除，勿提交到仓库） -->
+        <None Update="Assets\Models\*.dat">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <!-- 将 OpenCV 原生库复制到输出根目录，确保插件在 ClassIsland 的程序集加载上下文中可被解析 -->
+    <Target Name="CopyNativeOpenCv" AfterTargets="Build">
+        <Copy SourceFiles="$(OutDir)runtimes\win-x64\native\OpenCvSharpExtern.dll"
+              DestinationFiles="$(OutDir)OpenCvSharpExtern.dll"
+              Condition="Exists('$(OutDir)runtimes\win-x64\native\OpenCvSharpExtern.dll')" />
+    </Target>
+
+    <!-- 将 dlib 原生库复制到输出根目录，确保插件在 ClassIsland 的程序集加载上下文中可被 P/Invoke 解析 -->
+    <Target Name="CopyDlibNative" AfterTargets="CopyNativeOpenCv">
+        <Copy SourceFiles="$(OutDir)runtimes\win-x64\native\DlibDotNetNative.dll"
+              DestinationFiles="$(OutDir)DlibDotNetNative.dll"
+              Condition="Exists('$(OutDir)runtimes\win-x64\native\DlibDotNetNative.dll')" />
+        <Copy SourceFiles="$(OutDir)runtimes\win-x64\native\DlibDotNetNativeDnn.dll"
+              DestinationFiles="$(OutDir)DlibDotNetNativeDnn.dll"
+              Condition="Exists('$(OutDir)runtimes\win-x64\native\DlibDotNetNativeDnn.dll')" />
+    </Target>
+
+    <!-- ==================== 开发期自动部署 ====================
+         每次构建后把插件输出同步到本机 ClassIsland 插件目录，免去手动重装 .cipx。
+
+         · 覆盖插件根目录： dotnet build -p:ClassIslandPluginsDir=X:\path\to\data\Plugins
+         · 临时关闭部署：   dotnet build -p:DeployToClassIsland=false
+         · 目录不存在时静默跳过，不影响他人 / CI 构建。
+
+         安全约定：只覆盖代码产物，绝不删除用户数据
+         （settings.json 设置、enrollment/ 人脸模板、logs/ 日志均原样保留）。
+    -->
+    <PropertyGroup>
+        <ClassIslandPluginId>yty16.cipeckshield</ClassIslandPluginId>
+        <ClassIslandPluginsDir Condition="'$(ClassIslandPluginsDir)' == ''">D:\software\ClassIsland_app_windows_x64_full_singleFile\data\Plugins</ClassIslandPluginsDir>
+        <ClassIslandDeployDir>$(ClassIslandPluginsDir)\$(ClassIslandPluginId)</ClassIslandDeployDir>
+        <ClassIslandProcessName Condition="'$(ClassIslandProcessName)' == ''">ClassIsland.Desktop.exe</ClassIslandProcessName>
+        <DeployToClassIsland Condition="'$(DeployToClassIsland)' == ''">true</DeployToClassIsland>
+    </PropertyGroup>
+
+    <Target Name="DeployToClassIslandPlugins" AfterTargets="CopyDlibNative"
+            Condition="'$(DeployToClassIsland)' == 'true' And Exists('$(ClassIslandPluginsDir)')">
+
+        <!-- ClassIsland 运行中会锁定插件 dll，此时部署必然失败且新版也不会生效，故先检测并跳过 -->
+        <Exec Command="tasklist /FI &quot;IMAGENAME eq $(ClassIslandProcessName)&quot; /NH"
+              ConsoleToMSBuild="true" IgnoreExitCode="true"
+              StandardOutputImportance="low" StandardErrorImportance="low">
+            <Output TaskParameter="ConsoleOutput" PropertyName="_CiProcList" />
+        </Exec>
+        <PropertyGroup>
+            <_CiRunning>false</_CiRunning>
+            <_CiRunning Condition="$(_CiProcList.Contains('$(ClassIslandProcessName)'))">true</_CiRunning>
+        </PropertyGroup>
+
+        <Message Importance="high" Condition="'$(_CiRunning)' == 'true'"
+                 Text="[部署跳过] ClassIsland 正在运行，插件 dll 被占用。请退出 ClassIsland 后重新构建，即可自动部署到：$(ClassIslandDeployDir)" />
+
+        <!-- 仅清理代码产物，避免旧依赖（如已移除的 System.Management.dll）残留导致加载冲突 -->
+        <ItemGroup Condition="'$(_CiRunning)' != 'true'">
+            <_CiStale Include="$(ClassIslandDeployDir)\*.dll" />
+            <_CiStale Include="$(ClassIslandDeployDir)\*.pdb" />
+            <_CiStale Include="$(ClassIslandDeployDir)\*.deps.json" />
+            <_CiStale Include="$(ClassIslandDeployDir)\*.runtimeconfig.json" />
+            <_CiStale Include="$(ClassIslandDeployDir)\runtimes\**\*.*" />
+            <!-- 待部署文件：构建输出全部内容，.cipx 本体无需进插件目录 -->
+            <_CiDeploy Include="$(OutDir)**\*.*" Exclude="$(OutDir)**\*.cipx;$(OutDir)runtimes\win-x86\**\*.*" />
+        </ItemGroup>
+
+        <Delete Files="@(_CiStale)" Condition="'$(_CiRunning)' != 'true'" ContinueOnError="true" />
+        <MakeDir Directories="$(ClassIslandDeployDir)" Condition="'$(_CiRunning)' != 'true'" />
+        <Copy SourceFiles="@(_CiDeploy)"
+              DestinationFiles="@(_CiDeploy->'$(ClassIslandDeployDir)\%(RecursiveDir)%(Filename)%(Extension)')"
+              Condition="'$(_CiRunning)' != 'true'" ContinueOnError="true" />
+
+        <Message Importance="high" Condition="'$(_CiRunning)' != 'true'"
+                 Text="[已部署] @(_CiDeploy->Count()) 个文件 -> $(ClassIslandDeployDir)（用户数据已保留）" />
+    </Target>
+
+</Project>
