@@ -1,5 +1,11 @@
 # CI-PeekShield
 
+![GitHub Release](https://img.shields.io/github/v/release/yty16/CI-PeekShield?label=Release)
+![GitHub Downloads](https://img.shields.io/github/downloads/yty16/CI-PeekShield/total?label=Downloads)
+![License](https://img.shields.io/badge/license-%E9%9D%9E%E5%95%86%E4%B8%9A%E8%BD%AF%E4%BB%B6%E8%AE%B8%E5%8F%AF-red)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
+![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)
+
 电脑隐私防护插件，参考主流移动设备端的智能防窥体验。调用前置摄像头进行本地 AI 人脸检测，
 区分主用户与偷窥人员，检测到他人窥屏时触发防窥保护（雾化遮罩 / 弹窗 / 警报 / 最小化隐私软件）。
 
