@@ -1,6 +1,7 @@
 # CI-PeekShield
 
 ![GitHub Release](https://img.shields.io/github/v/release/yty16/CI-PeekShield?label=Release)
+![GitHub Stars](https://img.shields.io/github/stars/yty16/CI-PeekShield?label=Stars)
 ![GitHub Downloads](https://img.shields.io/github/downloads/yty16/CI-PeekShield/total?label=Downloads)
 ![License](https://img.shields.io/badge/license-%E9%9D%9E%E5%95%86%E4%B8%9A%E8%BD%AF%E4%BB%B6%E8%AE%B8%E5%8F%AF-red)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
