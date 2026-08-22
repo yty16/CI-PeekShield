@@ -449,7 +449,7 @@ public partial class SettingsPage : SettingsPageBase
         _pausedCheck = MakeCheck("暂停全部防护", S.Paused, v => { S.Paused = v; Commit(); });
         s.Children.Add(_enableSmartPeekCheck);
         s.Children.Add(_pausedCheck);
-        s.Children.Add(MakeCheck("手动固定防窥（侧面视角变暗模糊）", S.ManualMode, v => { S.ManualMode = v; Commit(); }));
+        s.Children.Add(MakeCheck("手动固定防窥（侧面视角变暗模糊，按 Esc 退出）", S.ManualMode, v => { S.ManualMode = v; Commit(); }));
         return s;
     }
 

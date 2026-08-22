@@ -29,6 +29,7 @@ public class PeekShieldEngine
     private PeekShieldNotificationProvider? _notifier;
     private TrayService? _tray;
     private HotkeyService? _hotkey;
+    private HotkeyService? _escHotkey;
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
 
@@ -128,6 +129,7 @@ public class PeekShieldEngine
         if (_settings.ShowTrayIcon) _tray.Start();
 
         ApplyHotkey();
+        ApplyEscHotkey();
         ApplyManualMode();
 
         LoggerService.LogInfo("引擎初始化完成（构建签名 " + PeekShieldSettings.BuildSignature + "）");
@@ -462,6 +464,7 @@ public class PeekShieldEngine
             _tray.SetManualLabel(_settings.ManualMode);
         }
         ApplyHotkey();
+        ApplyEscHotkey();
         ApplyManualMode();
 
         if (_settings.EnableSmartPeek && !_settings.Paused)
@@ -501,6 +504,28 @@ public class PeekShieldEngine
         var desc = string.Join("+", new[] { (mod & Keys.Control) != 0 ? "Ctrl" : null, (mod & Keys.Shift) != 0 ? "Shift" : null, (mod & Keys.Alt) != 0 ? "Alt" : null, key.ToString() }.Where(s => s != null));
         _hotkey = new HotkeyService(mod, key, OnHotkeyPressed);
         LoggerService.LogInfo($"快捷键已注册：{desc}，用于一键暂停/恢复防护");
+    }
+
+    private void ApplyEscHotkey()
+    {
+        _escHotkey?.Dispose();
+        _escHotkey = new HotkeyService(0, Keys.Escape, OnEscPressed);
+    }
+
+    private void OnEscPressed()
+    {
+        if (!_settings.ManualMode) return;
+        ExitManual();
+    }
+
+    public void ExitManual()
+    {
+        if (!_settings.ManualMode) return;
+        _settings.ManualMode = false;
+        _settings.Save();
+        ApplySettings();
+        SettingsChanged?.Invoke();
+        _tray?.ShowBalloon("CI-PeekShield", "已退出手动防窥", ToolTipIcon.Info);
     }
 
     private void OnHotkeyPressed()
@@ -737,6 +762,7 @@ public class PeekShieldEngine
         _overlay.Dismissed -= OnOverlayDismissed;
         _overlay.HideAll();
         _hotkey?.Dispose();
+        _escHotkey?.Dispose();
         _tray?.Stop();
         _recognizer?.Dispose();
         _faceEngine?.Dispose();
