@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -240,15 +241,26 @@ public class OverlayService
             });
             Content = grid;
 
-            Opened += (_, _) =>
-            {
-                var h = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
-                if (h != IntPtr.Zero)
-                {
-                    var ex = NativeMethods.GetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE);
-                    NativeMethods.SetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE, new IntPtr(ex.ToInt64() | NativeMethods.WS_EX_TRANSPARENT));
-                }
-            };
+            Opened += (_, _) => InstallClickThrough();
+        }
+
+        private NativeMethods.WndProcDelegate? _clickThroughProc;
+        private IntPtr _prevWndProc;
+
+        private void InstallClickThrough()
+        {
+            var h = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+            if (h == IntPtr.Zero) return;
+            var ex = NativeMethods.GetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE);
+            NativeMethods.SetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE, new IntPtr(ex.ToInt64() | NativeMethods.WS_EX_TRANSPARENT));
+            _clickThroughProc = ClickThroughWndProc;
+            _prevWndProc = NativeMethods.SetWindowLongPtr(h, NativeMethods.GWLP_WNDPROC, Marshal.GetFunctionPointerForDelegate(_clickThroughProc));
+        }
+
+        private IntPtr ClickThroughWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (msg == NativeMethods.WM_NCHITTEST) return NativeMethods.HTTRANSPARENT;
+            return NativeMethods.CallWindowProc(_prevWndProc, hWnd, msg, wParam, lParam);
         }
         public void SetMessage(string? msg) => Dispatcher.UIThread.Post(() =>
         {

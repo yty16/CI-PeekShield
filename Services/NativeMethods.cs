@@ -50,8 +50,14 @@ internal static class NativeMethods
 
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TRANSPARENT = 0x00000020;
+    public const int GWLP_WNDPROC = -4;
+    public const int WM_NCHITTEST = 0x0084;
+    public static readonly IntPtr HTTRANSPARENT = new IntPtr(-1);
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
     [DllImport("user32.dll")]
     public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
