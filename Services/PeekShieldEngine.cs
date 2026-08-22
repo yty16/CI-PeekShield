@@ -472,16 +472,19 @@ public class PeekShieldEngine
 
     private void ApplyManualMode()
     {
-        if (_settings.ManualMode && _settings.EnableSmartPeek && !_settings.Paused)
+        if (_settings.Paused)
+        {
+            _overlay.HideAll();
+            return;
+        }
+        if (_settings.ManualMode && _settings.EnableSmartPeek)
         {
             if (_peekActive) EndPeek();
             _overlay.ShowFog("手动防窥模式已开启（侧面视角已变暗模糊）");
             PushStatus(EngineStatus.Manual);
+            return;
         }
-        else if (!_settings.ManualMode && !_peekActive)
-        {
-            _overlay.HideAll();
-        }
+        _overlay.HideAll();
     }
 
     private void ApplyHotkey()

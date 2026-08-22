@@ -239,6 +239,16 @@ public class OverlayService
                 IsHitTestVisible = false
             });
             Content = grid;
+
+            Opened += (_, _) =>
+            {
+                var h = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                if (h != IntPtr.Zero)
+                {
+                    var ex = NativeMethods.GetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE);
+                    NativeMethods.SetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE, new IntPtr(ex.ToInt64() | NativeMethods.WS_EX_TRANSPARENT));
+                }
+            };
         }
         public void SetMessage(string? msg) => Dispatcher.UIThread.Post(() =>
         {
