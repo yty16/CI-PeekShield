@@ -91,3 +91,9 @@ dotnet build -c Release
 - 软件基于 GNU 通用公共许可证第 3 版（GPL-3.0，详见 `LICENSE`）开源，使用、修改与再分发均须遵循该许可证条款，按"现状"提供，不保证无误或满足特定需求；检测结果可能误报 / 漏报，是否被偷窥由你自行判断，使用风险自负。
 
 许可与免责声明详见同目录 `LICENSE` 与 `DISCLAIMER.md`。
+
+## 相关链接
+
+- 个人主页：<https://github.com/yty16>
+- 本插件仓库：<https://github.com/yty16/CI-PeekShield>
+- 独立版应用：<https://github.com/yty16/PeekShield>
