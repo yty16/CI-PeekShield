@@ -3,7 +3,7 @@
 ![GitHub Release](https://img.shields.io/github/v/release/yty16/CI-PeekShield?label=Release)
 ![GitHub Stars](https://img.shields.io/github/stars/yty16/CI-PeekShield?label=Stars)
 ![GitHub Downloads](https://img.shields.io/github/downloads/yty16/CI-PeekShield/total?label=Downloads)
-![License](https://img.shields.io/badge/license-%E9%9D%9E%E5%95%86%E4%B8%9A%E8%BD%AF%E4%BB%B6%E8%AE%B8%E5%8F%AF-red)
+![License: GPL-3.0](https://img.shields.io/github/license/yty16/CI-PeekShield?label=License&color=blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)
 ![.NET](https://img.shields.io/badge/.NET-8.0-512BD4)
 
@@ -88,6 +88,6 @@ dotnet build -c Release
 ## 免责声明
 
 - 本插件为运行于本地的智能防偷窥工具，通过本地摄像头与人脸识别实现防偷窥提醒；所有人脸识别、特征计算与偷窥截图均在**本地**完成，绝不联网、不上传任何人脸或摄像头数据。
-- 软件基于自定义非商业软件许可协议开源（详见 `LICENSE`），仅限个人非商业使用，按"现状"提供，不保证无误或满足特定需求；检测结果可能误报 / 漏报，是否被偷窥由你自行判断，使用风险自负。
+- 软件基于 GNU 通用公共许可证第 3 版（GPL-3.0，详见 `LICENSE`）开源，使用、修改与再分发均须遵循该许可证条款，按"现状"提供，不保证无误或满足特定需求；检测结果可能误报 / 漏报，是否被偷窥由你自行判断，使用风险自负。
 
 许可与免责声明详见同目录 `LICENSE` 与 `DISCLAIMER.md`。
