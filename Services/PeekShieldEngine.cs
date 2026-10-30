@@ -12,7 +12,7 @@ namespace CIPeekShield.Services;
 
 public enum EngineStatus
 {
-    Idle, Monitoring, Secure, Peek, Paused, Manual, NoCamera, NotEnrolled, Error
+    Idle, Monitoring, Secure, Peek, Paused, Manual, NoCamera, NotEnrolled, PendingConsent, Error
 }
 
 public class PeekShieldEngine
@@ -23,6 +23,7 @@ public class PeekShieldEngine
     private FaceRecognizer? _recognizer;
     private FaceVerifier? _verifier;
     private FaceEngine? _faceEngine;
+    private WhitelistService? _whitelist;
     private readonly CameraService _camera = new();
     private readonly ForegroundWatcher _fg = new();
     private readonly OverlayService _overlay = new();
@@ -45,6 +46,9 @@ public class PeekShieldEngine
     private bool _lastLoggedOwnerPresent;
     private DateTime _lastDebugSave = DateTime.MinValue;
     private int _debugSavedCount;
+
+    private DateTime _lastAutoBackup = DateTime.MinValue;
+    private bool _autoBackupRunning;
 
     private readonly Queue<int> _faceCountHistory = new();
     private readonly Queue<bool> _ownerHistory = new();
@@ -103,6 +107,8 @@ public class PeekShieldEngine
         }
         _verifier = new FaceVerifier();
         _verifier.Load(EnrollDir);
+        _whitelist = new WhitelistService(_settings);
+        _whitelist.Reload();
         _faceEngine = new FaceEngine(_recognizer, _verifier);
         if (!_faceEngine.IsFaceReady)
         {
@@ -178,7 +184,9 @@ public class PeekShieldEngine
                 if (_peekActive) EndPeek();
                 PushStatus(_settings.Paused ? EngineStatus.Paused
                     : (_settings.ManualMode ? EngineStatus.Manual
-                    : (_verifier!.IsEnrolled ? EngineStatus.Monitoring : EngineStatus.NotEnrolled)));
+                    : (_verifier!.IsEnrolled
+                        ? (ConsentService.CanProcessFace(_settings) ? EngineStatus.Monitoring : EngineStatus.PendingConsent)
+                        : EngineStatus.NotEnrolled)));
                 await SafeDelay(700, ct);
                 continue;
             }
@@ -210,9 +218,11 @@ public class PeekShieldEngine
             List<FaceInfo> faces = new();
             try
             {
-                faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter);
+                faces = _faceEngine!.Detect(frame, _settings.Sensitivity, _settings.LowLightEnhance, _settings.MirrorPosterFilter, _settings.EnableGazeDetection);
+                ApplyWhitelist(faces);
                 _fg.RefreshForeground();
                 Evaluate(faces, frame);
+                MaybeAutoBackup();
             }
             catch (Exception ex)
             {
@@ -238,6 +248,8 @@ public class PeekShieldEngine
         if (_settings.ManualMode) return false;
         if (_fg.IsLocked) return false;
         if (_verifier == null || !_verifier.IsEnrolled) return false;
+        // 隐私同意门控：未获得人脸处理同意前，绝不进行人脸检测 / 识别
+        if (!ConsentService.CanProcessFace(_settings)) return false;
         if (_settings.OnlyProtectForeground && _settings.ProtectedProcesses.Count > 0 && !IsProtectedForeground())
             return false;
         return true;
@@ -360,7 +372,7 @@ public class PeekShieldEngine
     {
         int count = faces.Count;
         bool owner = faces.Any(f => f.IsOwner);
-        bool strangerLooking = faces.Any(f => !f.IsOwner && f.LookingAtScreen);
+        bool strangerLooking = faces.Any(f => !f.IsOwner && f.LookingAtScreen && !f.IsWhitelisted);
 
         PushHistory(count, owner, strangerLooking);
         int stableCount = StableFaceCount();
@@ -370,7 +382,7 @@ public class PeekShieldEngine
         _faceCount = stableCount;
         _ownerPresent = stableOwner;
 
-        var strangerFaces = faces.Where(f => !f.IsOwner && f.LookingAtScreen && f.Embedding.Length == FaceVerifier.Dim).ToList();
+        var strangerFaces = faces.Where(f => !f.IsOwner && f.LookingAtScreen && !f.IsWhitelisted && f.Embedding.Length == FaceVerifier.Dim).ToList();
         bool hasAlertableStranger = stableCount >= 1 && stableStranger && HasAlertableStranger(strangerFaces);
 
         if (hasAlertableStranger && !_peekActive) StartPeek(frame, strangerFaces);
@@ -427,6 +439,33 @@ public class PeekShieldEngine
         _peekActive = true;
         RegisterStrangerAlert(strangers);
 
+        if (_settings.SilentCaptureStrangers)
+        {
+            try
+            {
+                var dir = string.IsNullOrWhiteSpace(_settings.SilentCaptureDir)
+                    ? Path.Combine(PeekShieldSettings.PluginDir, "logs", "evidence")
+                    : _settings.SilentCaptureDir;
+                Directory.CreateDirectory(dir);
+                int saved = 0;
+                foreach (var sf in strangers)
+                {
+                    var r = sf.Rect;
+                    int pad = (int)(Math.Min(frame.Width, frame.Height) * 0.15);
+                    int x = Math.Max(0, r.X - pad);
+                    int y = Math.Max(0, r.Y - pad);
+                    int w = Math.Min(frame.Width - x, r.Width + pad * 2);
+                    int h = Math.Min(frame.Height - y, r.Height + pad * 2);
+                    if (w <= 0 || h <= 0) continue;
+                    using var roi = new Mat(frame, new Rect(x, y, w, h));
+                    var name = $"evidence_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.png";
+                    if (Cv2.ImWrite(Path.Combine(dir, name), roi)) saved++;
+                }
+                if (saved > 0) LoggerService.LogInfo($"已静默保存 {saved} 张陌生人取证图到 {dir}（仅存于本机）");
+            }
+            catch (Exception ex) { LoggerService.LogInfo("静默取证异常：" + ex.Message); }
+        }
+
         if (_settings.EnableTopBanner)
             _notifier?.PushPeekAlert("CI-PeekShield 已检测到他人注视屏幕，请注意隐私。");
 
@@ -466,11 +505,21 @@ public class PeekShieldEngine
         ApplyHotkey();
         ApplyEscHotkey();
         ApplyManualMode();
+        _whitelist?.Reload();
 
         if (_settings.EnableSmartPeek && !_settings.Paused)
             StartLoop();
         else
             StopLoop();
+    }
+
+    public List<DiagnosticItem> RunDiagnostic()
+    {
+        var items = DiagnosticService.Run(_settings, this);
+        _settings.LastDiagnosticAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        _settings.Save();
+        LoggerService.LogInfo($"诊断自检完成：{items.Count} 项（错误={items.Count(x => x.Status == DiagnosticStatus.Error)} 警告={items.Count(x => x.Status == DiagnosticStatus.Warn)}）");
+        return items;
     }
 
     private void ApplyManualMode()
@@ -728,6 +777,132 @@ public class PeekShieldEngine
         PushStatus(_peekActive ? EngineStatus.Peek : EngineStatus.NotEnrolled);
     }
 
+    // —— 白名单（家人 / 常驻同事不触发） ——
+    public List<WhitelistEntry> GetWhitelist() => _whitelist?.Snapshot() ?? new();
+
+    public string AddWhitelistMember(string name)
+    {
+        var e = new WhitelistEntry { Id = Guid.NewGuid().ToString("N"), Name = name, Enabled = true };
+        _settings.Whitelist.Add(e);
+        _settings.Save();
+        _whitelist?.AddItem(e);
+        LoggerService.LogInfo($"已添加白名单成员：{name}（{e.Id}）");
+        return e.Id;
+    }
+
+    public void RenameWhitelist(string id, string name) => _whitelist?.Rename(id, name);
+
+    public void RemoveWhitelist(string id)
+    {
+        _whitelist?.RemoveItem(id);
+        LoggerService.LogInfo($"已移除白名单成员：{id}");
+    }
+
+    public void ReloadWhitelist() => _whitelist?.Reload();
+
+    public async Task<bool> EnrollWhitelistAsync(string id, string name, int samples = 10, Action<int>? progress = null)
+    {
+        StopLoop();
+        var item = _whitelist?.GetItem(id);
+        if (item == null) { if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop(); return false; }
+        item.Verifier.Clear();
+        bool ok = false;
+        var seen = new List<float[]>();
+        try
+        {
+            using var cam = new CameraService();
+            if (!cam.Open(_settings.CameraIndex))
+            {
+                LoggerService.LogInfo($"白名单「{name}」录入失败：摄像头打开失败");
+                if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+                return false;
+            }
+            using var frame = new Mat();
+            int collected = 0, attempts = 0;
+            for (int i = 0; i < samples + 30 && collected < samples; i++)
+            {
+                if (!cam.ReadFrame(frame) || frame.Empty()) { await SafeDelay(150, default); continue; }
+                var faces = _recognizer!.Detect(frame);
+                if (faces.Count == 0) { await SafeDelay(200, default); continue; }
+                attempts++;
+                var emb = faces[0].Embedding;
+                bool dup = seen.Any(s => EmbDist(emb, s) < 0.25);
+                if (!dup)
+                {
+                    seen.Add(emb);
+                    if (item.Verifier.AddSample(emb)) { collected++; progress?.Invoke(collected); }
+                }
+                await SafeDelay(300, default);
+            }
+            cam.Close();
+            ok = collected >= 3;
+            if (ok)
+            {
+                _whitelist!.Persist(id);
+                LoggerService.LogInfo($"白名单「{name}」录入成功：接受={collected} 离散度={item.Verifier.SelfGap:F3}");
+            }
+            else
+            {
+                item.Verifier.Clear();
+                LoggerService.LogInfo($"白名单「{name}」录入失败：接受={collected}（需至少 3 张合格样本）");
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerService.LogInfo("白名单录入异常：" + ex);
+        }
+        finally
+        {
+            ResetHistory();
+            if (_settings.EnableSmartPeek && !_settings.Paused) StartLoop();
+        }
+        return ok;
+    }
+
+    private void ApplyWhitelist(List<FaceInfo> faces)
+    {
+        if (_whitelist == null || !_settings.WhitelistEnabled) return;
+        double th = FaceEngine.OwnerMatchThreshold(_settings.Sensitivity);
+        foreach (var f in faces)
+        {
+            if (f.IsOwner) continue;
+            var name = _whitelist.Match(f.Embedding, th);
+            if (name != null) { f.IsWhitelisted = true; f.WhitelistName = name; }
+        }
+    }
+
+    // —— 自动定时备份（轻量多配置载体） ——
+    private void MaybeAutoBackup()
+    {
+        if (!_settings.AutoBackupEnabled || _autoBackupRunning) return;
+        if ((DateTime.Now - _lastAutoBackup).TotalHours < _settings.AutoBackupIntervalHours) return;
+        _lastAutoBackup = DateTime.Now;
+        _autoBackupRunning = true;
+        Task.Run(() =>
+        {
+            try
+            {
+                var dir = string.IsNullOrWhiteSpace(_settings.AutoBackupDir)
+                    ? Path.Combine(PeekShieldSettings.PluginDir, "logs", "backups")
+                    : _settings.AutoBackupDir;
+                Directory.CreateDirectory(dir);
+                var file = Path.Combine(dir, $"autobackup_{DateTime.Now:yyyyMMdd_HHmmss}.kyd");
+                var req = new BackupExportRequest
+                {
+                    IncludeSettings = true,
+                    IncludeOwnerFace = _settings.IsEnrolled,
+                    IncludeWhitelistFaces = _settings.Whitelist.Any(),
+                    FilePassword = string.IsNullOrEmpty(_settings.AutoBackupPassword) ? null : _settings.AutoBackupPassword
+                };
+                var r = ConfigBackupService.Export(file, req);
+                if (r.Success) LoggerService.LogInfo($"自动备份完成：{file}（加密={r.Encrypted}）");
+                else LoggerService.LogInfo("自动备份失败：" + r.Error);
+            }
+            catch (Exception ex) { LoggerService.LogInfo("自动备份异常：" + ex.Message); }
+            finally { _autoBackupRunning = false; }
+        });
+    }
+
     private void ResetHistory()
     {
         _faceCountHistory.Clear();
@@ -751,6 +926,7 @@ public class PeekShieldEngine
         EngineStatus.Manual => "手动防窥",
         EngineStatus.NoCamera => "摄像头不可用",
         EngineStatus.NotEnrolled => "未录入人脸",
+        EngineStatus.PendingConsent => "待隐私授权",
         EngineStatus.Error => "错误",
         _ => "就绪"
     };

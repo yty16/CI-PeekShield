@@ -12,8 +12,12 @@ public class FaceInfo
     public double Score;
     public bool HasEyes;
     public double EyeAngleDeg;
+    public double YawDeg;
+    public double PitchDeg;
     public bool LookingAtScreen;
     public float[] Embedding = Array.Empty<float>();
+    public bool IsWhitelisted;
+    public string WhitelistName = "";
 }
 
 public class FaceEngine : IDisposable
@@ -38,7 +42,9 @@ public class FaceEngine : IDisposable
 
     public bool IsFaceReady => _recognizer.IsReady;
 
-    public List<FaceInfo> Detect(Mat frame, int sensitivity, bool lowLight, bool mirrorPosterFilter)
+    public static double OwnerMatchThreshold(int sensitivity) => OwnerThresh[Math.Clamp(sensitivity, 0, 2)];
+
+    public List<FaceInfo> Detect(Mat frame, int sensitivity, bool lowLight, bool mirrorPosterFilter, bool gazeDetection = false, double yawTol = 35, double pitchTol = 30)
     {
         sensitivity = Math.Clamp(sensitivity, 0, 2);
         var list = new List<FaceInfo>();
@@ -50,7 +56,16 @@ public class FaceEngine : IDisposable
         LastFrameStd = s.Val0;
         gray.Dispose();
 
-        var dlibFaces = _recognizer.Detect(frame);
+        Mat detectSrc = frame;
+        Mat? enhanced = null;
+        if (lowLight && LastFrameMean < 70)
+        {
+            enhanced = ClaheEnhance(frame);
+            if (enhanced != null) detectSrc = enhanced;
+        }
+
+        var dlibFaces = _recognizer.Detect(detectSrc);
+        enhanced?.Dispose();
         LastRawFaceCount = dlibFaces.Count;
 
         foreach (var df in dlibFaces)
@@ -68,6 +83,11 @@ public class FaceEngine : IDisposable
                 && fw >= MinSizeFrac[sensitivity]
                 && offset <= CenterTol[sensitivity];
 
+            // 视线 / 低头检测：仅在开启时生效，要求头部偏航与俯仰均在容差内，
+            // 否则不视为"注视屏幕"（避免侧身交谈、低头看手机等场景误报偷窥）。
+            if (gazeDetection && looking)
+                looking = Math.Abs(df.YawDeg) <= yawTol && Math.Abs(df.PitchDeg) <= pitchTol;
+
             if (mirrorPosterFilter && !df.HasEyes && fw > 0.55) continue;
 
             list.Add(new FaceInfo
@@ -77,6 +97,8 @@ public class FaceEngine : IDisposable
                 Score = score,
                 HasEyes = df.HasEyes,
                 EyeAngleDeg = df.EyeAngleDeg,
+                YawDeg = df.YawDeg,
+                PitchDeg = df.PitchDeg,
                 LookingAtScreen = looking,
                 Embedding = df.Embedding ?? Array.Empty<float>()
             });
@@ -86,5 +108,34 @@ public class FaceEngine : IDisposable
 
     public void Dispose()
     {
+    }
+
+    private static Mat? ClaheEnhance(Mat bgr)
+    {
+        var lab = new Mat();
+        var merged = new Mat();
+        var outMat = new Mat();
+        Mat[] ch = Array.Empty<Mat>();
+        try
+        {
+            Cv2.CvtColor(bgr, lab, ColorConversionCodes.BGR2Lab);
+            ch = Cv2.Split(lab);
+            using var clahe = Cv2.CreateCLAHE(2.0, new Size(8, 8));
+            clahe.Apply(ch[0], ch[0]);
+            Cv2.Merge(ch, merged);
+            Cv2.CvtColor(merged, outMat, ColorConversionCodes.Lab2BGR);
+            return outMat;
+        }
+        catch
+        {
+            outMat.Dispose();
+            return null;
+        }
+        finally
+        {
+            foreach (var c in ch) c.Dispose();
+            lab.Dispose();
+            merged.Dispose();
+        }
     }
 }

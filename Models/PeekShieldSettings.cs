@@ -12,6 +12,9 @@ public class PeekShieldSettings
     private static readonly string _buildToken = "eXR5MTY=";
     internal static string BuildSignature => _buildToken;
 
+    // 隐私同意版本（每次隐私告知内容有重大变更时 +1，旧版本用户需重新确认）
+    public const int CurrentConsentVersion = 1;
+
     public static string PluginDir =>
         Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)
         ?? AppContext.BaseDirectory;
@@ -64,6 +67,10 @@ public class PeekShieldSettings
 
     public bool MirrorPosterFilter { get; set; } = true;
 
+    // 视线 / 低头检测：仅当头部正对屏幕（偏航 + 俯仰均在容差内）才视为"注视屏幕"，
+    // 避免侧身交谈、低头看手机等场景误报偷窥。
+    public bool EnableGazeDetection { get; set; } = true;
+
     public bool Paused { get; set; } = false;
     public bool ManualMode { get; set; } = false;
 
@@ -77,6 +84,27 @@ public class PeekShieldSettings
     public bool RestoreOnSafe { get; set; } = false;
 
     public bool IsEnrolled { get; set; } = false;
+
+    // —— 隐私同意门控 ——
+    public bool ConsentPrivacyPolicy { get; set; } = false;
+    public bool ConsentFaceProcessing { get; set; } = false;
+    public int ConsentVersion { get; set; } = 0;
+    public string ConsentTime { get; set; } = "";
+
+    // —— 白名单（家人 / 常驻同事不触发） ——
+    public bool WhitelistEnabled { get; set; } = false;
+    public List<WhitelistEntry> Whitelist { get; set; } = new();
+
+    // —— 静默取证 + 自动定时备份（批次2） ——
+    public bool SilentCaptureStrangers { get; set; } = true;
+    public string SilentCaptureDir { get; set; } = "";
+    public bool AutoBackupEnabled { get; set; } = false;
+    public int AutoBackupIntervalHours { get; set; } = 24;
+    public string AutoBackupDir { get; set; } = "";
+    public string AutoBackupPassword { get; set; } = "";
+
+    // —— 诊断自检（批次6） ——
+    public string LastDiagnosticAt { get; set; } = "";
 
     public int SettingsVersion { get; set; } = 0;
 
@@ -123,6 +151,16 @@ public class PeekShieldSettings
             SettingsVersion = 1;
             changed = true;
         }
+        if (SettingsVersion < 2)
+        {
+            // 新增功能默认：视线检测开、静默取证开、自动备份关
+            EnableGazeDetection = true;
+            SilentCaptureStrangers = true;
+            AutoBackupEnabled = false;
+            AutoBackupIntervalHours = 24;
+            SettingsVersion = 2;
+            changed = true;
+        }
         if (changed) Save();
     }
 
@@ -143,6 +181,13 @@ public class PeekShieldSettings
 
 public class ProtectedEntry
 {
+    public string Name { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+}
+
+public class WhitelistEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; } = "";
     public bool Enabled { get; set; } = true;
 }
